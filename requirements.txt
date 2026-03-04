@@ -1,0 +1,2 @@
+# ComfyUI 已自带 torch；本插件仅使用 Python 标准库 re 与 torch，无需额外依赖。
+# 若将来增加功能再在此处添加包名。
