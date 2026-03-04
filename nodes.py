@@ -121,9 +121,13 @@ def recolor_image(image: torch.Tensor, palette_rgb: list[tuple[float, float, flo
                 dim=0,
             )
 
-        # 全图像素归属到最近的中心（用全图算更准）
+        # 全图像素归属到最近的中心，再按原图亮度缩放，保留光影明暗
         assign_full = _kmeans_assign(pixels, sorted_centers)
-        new_colors = palette_t[assign_full.clamp(0, k - 1)]
+        new_colors = palette_t[assign_full.clamp(0, k - 1)]  # [N,3]
+        orig_lum = 0.2126 * pixels[:, 0] + 0.7152 * pixels[:, 1] + 0.0722 * pixels[:, 2]
+        pal_lum = 0.2126 * new_colors[:, 0] + 0.7152 * new_colors[:, 1] + 0.0722 * new_colors[:, 2]
+        scale = (orig_lum / (pal_lum + 1e-8)).unsqueeze(1)
+        new_colors = (new_colors * scale).clamp(0.0, 1.0)
         out.append(new_colors.reshape(H, W, 3))
     return torch.stack(out, dim=0)
 
