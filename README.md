@@ -2,6 +2,8 @@
 
 用预设色卡对图像重新配色，支持 [Coolors](https://coolors.co) 链接或十六进制色值。适配 ComfyUI 1.23.x。
 
+**网页版体验（无需安装）**： [https://quhan0925.github.io/ComfyUI-PaletteRecolor/](https://quhan0925.github.io/ComfyUI-PaletteRecolor/)
+
 ## 安装
 
 1. 进入 ComfyUI 自定义节点目录：
@@ -46,6 +48,18 @@
 ## 原理简述
 
 对输入图像做 k-means 聚类得到若干主色，按亮度与色卡颜色一一对应，再把每个像素映射到最近的聚类并替换为对应色卡颜色，从而在保留大致明暗与区域结构的前提下统一成色卡配色。
+
+## 网页版公网部署（GitHub Pages）
+
+仓库内 `docs/` 目录为网页版测试页，可通过 GitHub Pages 发布为公网链接。
+
+1. 在 GitHub 打开本仓库，进入 **Settings** → **Pages**。
+2. **Source** 选择 **Deploy from a branch**。
+3. **Branch** 选 `main`，**Folder** 选 **/docs**，点击 **Save**。
+4. 等待一两分钟后，访问：  
+   **https://quhan0925.github.io/ComfyUI-PaletteRecolor/**  
+   即可使用网页版色卡重着色（上传图片、输入色卡、查看效果）。  
+   若你的仓库名为其他或为 fork，将链接中的 `quhan0925` 和 `ComfyUI-PaletteRecolor` 换成你的用户名和仓库名即可。
 
 ## 许可证
 

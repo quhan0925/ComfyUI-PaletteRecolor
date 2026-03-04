@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>色卡重着色 - 测试</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", system-ui, sans-serif;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #1a1b26;
+      color: #c0caf5;
+      min-height: 100vh;
+    }
+    h1 { color: #7aa2f7; font-size: 1.5rem; margin-bottom: 8px; }
+    .sub { color: #565f89; font-size: 0.9rem; margin-bottom: 24px; }
+    label { display: block; margin-bottom: 6px; color: #a9b1d6; }
+    input[type="file"] { margin-bottom: 12px; }
+    input[type="text"] {
+      width: 100%;
+      padding: 10px 12px;
+      background: #24283b;
+      border: 1px solid #414868;
+      border-radius: 8px;
+      color: #c0caf5;
+      font-size: 14px;
+      margin-bottom: 16px;
+    }
+    input[type="text"]::placeholder { color: #565f89; }
+    button {
+      background: #7aa2f7;
+      color: #1a1b26;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button:hover { background: #89b4fa; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .preview {
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+      margin-top: 24px;
+      align-items: flex-start;
+    }
+    .preview figcaption {
+      margin-top: 8px;
+      font-size: 13px;
+      color: #565f89;
+    }
+    .preview canvas {
+      display: block;
+      border-radius: 8px;
+      max-width: 100%;
+      background: #24283b;
+    }
+    .palette-bar {
+      height: 24px;
+      border-radius: 6px;
+      margin-top: 8px;
+      display: flex;
+      overflow: hidden;
+    }
+    .palette-bar span { flex: 1; }
+    .status { margin-top: 12px; font-size: 13px; color: #9ece6a; }
+    .status.err { color: #f7768e; }
+  </style>
+</head>
+<body>
+  <h1>色卡重着色 · 网页测试</h1>
+  <p class="sub">上传图片并输入色卡（Coolors 链接或十六进制），点击按钮查看重着色效果。</p>
+
+  <label>选择图片</label>
+  <input type="file" id="file" accept="image/*" />
+
+  <label>色卡（Coolors 链接或 hex，如 e8c547-30323d-3f414f）</label>
+  <input type="text" id="palette" placeholder="https://coolors.co/e8c547-30323d-3f414f-4d5061-5c80bc-cdd1c4" value="https://coolors.co/e8c547-30323d-3f414f-4d5061-5c80bc-cdd1c4" />
+
+  <div class="palette-bar" id="paletteBar"></div>
+
+  <button id="run" disabled>应用色卡</button>
+  <p class="status" id="status"></p>
+
+  <div class="preview">
+    <figure>
+      <canvas id="canvasBefore"></canvas>
+      <figcaption>原图</figcaption>
+    </figure>
+    <figure>
+      <canvas id="canvasAfter"></canvas>
+      <figcaption>重着色后</figcaption>
+    </figure>
+  </div>
+
+  <script>
+    (function () {
+      const MAX_PIXELS = 50000;
+      const KMEANS_ITERS = 8;
+
+      function parsePalette(s) {
+        s = (s || "").trim();
+        if (/coolors\.co/i.test(s)) {
+          const m = s.match(/coolors\.co[\/\-]([\w\-]+)/i);
+          if (m) s = m[1];
+        }
+        s = s.replace(/[,#]/g, " ").replace(/-/g, " ");
+        const parts = s.split(/\s+/).filter(Boolean);
+        const colors = [];
+        for (const p of parts) {
+          const hex = p.replace(/^#/, "").trim();
+          if (hex.length === 6 && /^[0-9a-fA-F]+$/.test(hex)) {
+            colors.push([
+              parseInt(hex.slice(0, 2), 16) / 255,
+              parseInt(hex.slice(2, 4), 16) / 255,
+              parseInt(hex.slice(4, 6), 16) / 255,
+            ]);
+          } else if (hex.length === 8) {
+            colors.push([
+              parseInt(hex.slice(0, 2), 16) / 255,
+              parseInt(hex.slice(2, 4), 16) / 255,
+              parseInt(hex.slice(4, 6), 16) / 255,
+            ]);
+          }
+        }
+        return colors;
+      }
+
+      function luminance(r, g, b) {
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      }
+
+      function dist2(a, b) {
+        let d = 0;
+        for (let i = 0; i < 3; i++) d += (a[i] - b[i]) ** 2;
+        return d;
+      }
+
+      function recolorImageData(data, width, height, palette) {
+        if (!palette.length) return data;
+        const k = palette.length;
+        const paletteSorted = palette.slice().sort((a, b) => luminance(a[0], a[1], a[2]) - luminance(b[0], b[1], b[2]));
+
+        const n = width * height;
+        const pixels = [];
+        for (let i = 0; i < n; i++) {
+          pixels.push([
+            data[i * 4] / 255,
+            data[i * 4 + 1] / 255,
+            data[i * 4 + 2] / 255,
+          ]);
+        }
+
+        let sample = pixels;
+        if (n > MAX_PIXELS) {
+          const step = Math.floor(n / MAX_PIXELS);
+          sample = [];
+          for (let i = 0; i < n; i += step) sample.push(pixels[i]);
+        }
+
+        const lum = sample.map((p) => luminance(p[0], p[1], p[2]));
+        const order = sample.map((_, i) => i).sort((a, b) => lum[a] - lum[b]);
+        const step = Math.max(1, Math.floor(sample.length / k));
+        let centers = [];
+        for (let i = 0; i < k; i++) {
+          const idx = order[Math.min(i * step + step / 2, sample.length - 1)];
+          centers.push(sample[idx].slice());
+        }
+
+        for (let iter = 0; iter < KMEANS_ITERS; iter++) {
+          const assign = sample.map((p) => {
+            let best = 0, bestD = dist2(p, centers[0]);
+            for (let i = 1; i < k; i++) {
+              const d = dist2(p, centers[i]);
+              if (d < bestD) { bestD = d; best = i; }
+            }
+            return best;
+          });
+          for (let i = 0; i < k; i++) {
+            const group = sample.filter((_, j) => assign[j] === i);
+            if (group.length) {
+              centers[i] = [0, 0, 0];
+              group.forEach((p) => { centers[i][0] += p[0]; centers[i][1] += p[1]; centers[i][2] += p[2]; });
+              centers[i][0] /= group.length; centers[i][1] /= group.length; centers[i][2] /= group.length;
+            }
+          }
+        }
+
+        const centerLum = centers.map((c) => luminance(c[0], c[1], c[2]));
+        const centerOrder = centers.map((_, i) => i).sort((a, b) => centerLum[a] - centerLum[b]);
+        const sortedCenters = centerOrder.map((i) => centers[i]);
+
+        const out = new Uint8ClampedArray(data.length);
+        for (let i = 0; i < n; i++) {
+          const p = pixels[i];
+          let best = 0, bestD = dist2(p, sortedCenters[0]);
+          for (let j = 1; j < k; j++) {
+            const d = dist2(p, sortedCenters[j]);
+            if (d < bestD) { bestD = d; best = j; }
+          }
+          const c = paletteSorted[best];
+          out[i * 4] = Math.round(c[0] * 255);
+          out[i * 4 + 1] = Math.round(c[1] * 255);
+          out[i * 4 + 2] = Math.round(c[2] * 255);
+          out[i * 4 + 3] = data[i * 4 + 3];
+        }
+        return out;
+      }
+
+      function renderPaletteBar(colors) {
+        const bar = document.getElementById("paletteBar");
+        bar.innerHTML = "";
+        colors.forEach((c) => {
+          const s = document.createElement("span");
+          s.style.background = `rgb(${Math.round(c[0]*255)},${Math.round(c[1]*255)},${Math.round(c[2]*255)})`;
+          bar.appendChild(s);
+        });
+      }
+
+      const fileInput = document.getElementById("file");
+      const paletteInput = document.getElementById("palette");
+      const runBtn = document.getElementById("run");
+      const statusEl = document.getElementById("status");
+      const canvasBefore = document.getElementById("canvasBefore");
+      const canvasAfter = document.getElementById("canvasAfter");
+
+      function setStatus(msg, isErr) {
+        statusEl.textContent = msg;
+        statusEl.className = "status" + (isErr ? " err" : "");
+      }
+
+      paletteInput.addEventListener("input", function () {
+        const colors = parsePalette(paletteInput.value);
+        renderPaletteBar(colors);
+      });
+      renderPaletteBar(parsePalette(paletteInput.value));
+
+      let currentImage = null;
+
+      fileInput.addEventListener("change", function () {
+        const f = this.files[0];
+        if (!f) return;
+        const img = new Image();
+        img.onload = function () {
+          currentImage = img;
+          runBtn.disabled = false;
+          const scale = Math.min(1, 600 / img.width, 500 / img.height);
+          canvasBefore.width = Math.round(img.width * scale);
+          canvasBefore.height = Math.round(img.height * scale);
+          const ctx = canvasBefore.getContext("2d");
+          ctx.drawImage(img, 0, 0, canvasBefore.width, canvasBefore.height);
+          canvasAfter.width = canvasBefore.width;
+          canvasAfter.height = canvasBefore.height;
+          setStatus("已加载图片，可点击「应用色卡」");
+        };
+        img.onerror = () => setStatus("图片加载失败", true);
+        img.src = URL.createObjectURL(f);
+      });
+
+      runBtn.addEventListener("click", function () {
+        if (!currentImage) return;
+        const colors = parsePalette(paletteInput.value);
+        if (!colors.length) {
+          setStatus("请输入有效色卡（Coolors 链接或 hex）", true);
+          return;
+        }
+        runBtn.disabled = true;
+        setStatus("处理中…");
+
+        const w = canvasBefore.width, h = canvasBefore.height;
+        const ctxBefore = canvasBefore.getContext("2d");
+        const imageData = ctxBefore.getImageData(0, 0, w, h);
+
+        setTimeout(() => {
+          const outData = recolorImageData(imageData.data, w, h, colors);
+          const out = new ImageData(outData, w, h);
+          canvasAfter.getContext("2d").putImageData(out, 0, 0);
+          setStatus("完成");
+          runBtn.disabled = false;
+        }, 50);
+      });
+    })();
+  </script>
+</body>
+</html>
